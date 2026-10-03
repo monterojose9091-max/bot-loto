@@ -151,7 +151,7 @@ t = threading.Thread(target=arrancar_servidor_web)
 t.daemon = True
 t.start()
 
-print("Bot 10M con Scraper de Internet Libre activo y patrullando...")
+print("Bot 10M con Scraper de Internet Libre activo y patrullando....")
 while True:
     verificar_y_enviar()
     time.sleep(20)
