@@ -1,4 +1,6 @@
-import os, requests, random, datetime, time
+import os, requests, random, datetime, time, threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 TOKEN, CHAT_ID = "8833275602:AAEWk5OZqANkJXh0mlPNMqXAGbP7nUbmSQk", "2023043563"
 ANIMALITOS = {"00": "Ballena", "1": "Carnero", "2": "Toro", "3": "Ciempiés", "4": "Alacrán", "5": "León", "6": "Rana", "7": "Perico", "8": "Ratón", "9": "Águila", "10": "Tigre", "11": "Gato", "12": "Caballo", "13": "Mono", "14": "Paloma", "15": "Zorro", "16": "Oso", "17": "Pavo", "18": "Burro", "19": "Chivo", "20": "Cochino", "21": "Gallo", "22": "Camello", "23": "Cebra", "24": "Iguana", "25": "Gallina", "26": "Vaca", "27": "Perro", "28": "Zamuro", "29": "Elefante", "30": "Caimán", "31": "Lapa", "32": "Ardilla", "33": "Pescado", "34": "Venado", "35": "Jirafa", "36": "Culebra"}
 NOMBRES_METODOS = ["M1 (Frecuencia)", "M2 (Fríos)", "M3 (Simetría)", "M4 (Cruzado)", "M5 (Markov)", "M6 (Poisson)", "M7 (Regresión)", "M8 (Condicionada)", "M9 (Cluster)", "M10 (Genético)"]
@@ -6,11 +8,22 @@ FILE_TRADICIONAL, FILE_INTERNACIONAL = "historial_tradicional.txt", "historial_i
 pesos_tradicional, pesos_internacional, learning_rate = [0.10]*10, [0.10]*10, 0.05
 historial_tradicional, historial_internacional = [], []
 ultimo_real_tradicional, ultimo_real_internacional = "Ninguno aún", "Ninguno aún"
-aciertos_por_metodo = [0]*10
-total_sorteos_evaluados = 0
-animalitos_ganadores_hoy = []
-resumen_enviado_hoy = False
+aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0]*10, 0, [], False
 ultimas_predicciones = {"Lotto Activo Tradicional 🇻🇪": {"horario": "", "sugerencias": []}, "Lotto Activo Internacional 🌍": {"horario": "", "sugerencias": []}}
+
+# --- SERVIDOR WEB FALSO PARA ENGAÑAR A RENDER ---
+class ServidorFake(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Bot de Loto Activo Inteligente Operando en Render")
+
+def arrancar_servidor_web():
+    puerto = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", puerto), ServidorFake)
+    print(f"📡 Servidor web simulado activo en el puerto {puerto} para Render.")
+    server.serve_forever()
 
 def cargar_historiales_desde_disco():
     global historial_tradicional, historial_internacional
@@ -47,7 +60,7 @@ def generar_prediccion_inteligente(loteria):
         coincidencias = [historial[i+1] for i in range(len(historial)-1) if historial[i] == ultimo_ganador]
         if coincidencias:
             m5_g = max(set(coincidencias), key=coincidencias.count)
-            lista_tripletas[4] = [m5_g, random.choice(claves), random.choice(claves)]
+            lista_tripletas = [m5_g, random.choice(claves), random.choice(claves)]
     return lista_tripletas, pesos
 
 def ajustar_pesos_aprendizaje(loteria, numero_real):
@@ -129,8 +142,15 @@ def verificar_y_enviar():
         ajustar_pesos_aprendizaje("Lotto Activo Internacional 🌍", raspar_resultado_real_de_internet("Lotto Activo Internacional 🌍", h_e))
         ultimas_predicciones["Lotto Activo Internacional 🌍"]["horario"] = ""
 
+# --- INICIO GENERAL CON HILOS CONCURRENTES ---
 print("Iniciando sistema operativo en Render...")
 cargar_historiales_desde_disco()
+
+# Lanzar el servidor web falso en segundo plano para que Render ponga el estado en LIVE
+t = threading.Thread(target=arrancar_servidor_web)
+t.daemon = True
+t.start()
+
 print("Bot 10M con Scraper de Internet Libre activo y patrullando...")
 while True:
     verificar_y_enviar()
