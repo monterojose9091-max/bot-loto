@@ -8,7 +8,7 @@ FILE_TRADICIONAL, FILE_INTERNACIONAL = "historial_tradicional.txt", "historial_i
 pesos_tradicional, pesos_internacional, learning_rate = [0.10]*10, [0.10]*10, 0.05
 historial_tradicional, historial_internacional = [], []
 ultimo_real_tradicional, ultimo_real_internacional = "Ninguno aún", "Ninguno aún"
-aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0] *10, 0, [], False
+aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0] * 10, 0, [], False
 ultimas_predicciones = {"Lotto Activo Tradicional 🇻🇪": {"horario": "", "sugerencias": []}, "Lotto Activo Internacional 🌍": {"horario": "", "sugerencias": []}}
 
 # --- SERVIDOR WEB FALSO PARA ENGAÑAR A RENDER ---
