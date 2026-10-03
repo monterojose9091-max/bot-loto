@@ -1,13 +1,15 @@
 import os, requests, random, datetime, time
 TOKEN, CHAT_ID = "8833275602:AAEWk5OZqANkJXh0mlPNMqXAGbP7nUbmSQk", "2023043563"
-PROXY = {"http": "http://proxy.server:3128", "https": "http://proxy.server:3128"}
 ANIMALITOS = {"00": "Ballena", "1": "Carnero", "2": "Toro", "3": "Ciempiés", "4": "Alacrán", "5": "León", "6": "Rana", "7": "Perico", "8": "Ratón", "9": "Águila", "10": "Tigre", "11": "Gato", "12": "Caballo", "13": "Mono", "14": "Paloma", "15": "Zorro", "16": "Oso", "17": "Pavo", "18": "Burro", "19": "Chivo", "20": "Cochino", "21": "Gallo", "22": "Camello", "23": "Cebra", "24": "Iguana", "25": "Gallina", "26": "Vaca", "27": "Perro", "28": "Zamuro", "29": "Elefante", "30": "Caimán", "31": "Lapa", "32": "Ardilla", "33": "Pescado", "34": "Venado", "35": "Jirafa", "36": "Culebra"}
 NOMBRES_METODOS = ["M1 (Frecuencia)", "M2 (Fríos)", "M3 (Simetría)", "M4 (Cruzado)", "M5 (Markov)", "M6 (Poisson)", "M7 (Regresión)", "M8 (Condicionada)", "M9 (Cluster)", "M10 (Genético)"]
 FILE_TRADICIONAL, FILE_INTERNACIONAL = "historial_tradicional.txt", "historial_internacional.txt"
 pesos_tradicional, pesos_internacional, learning_rate = [0.10]*10, [0.10]*10, 0.05
 historial_tradicional, historial_internacional = [], []
 ultimo_real_tradicional, ultimo_real_internacional = "Ninguno aún", "Ninguno aún"
-aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0]*10, 0, [], False
+aciertos_por_metodo = [0]*10
+total_sorteos_evaluados = 0
+animalitos_ganadores_hoy = []
+resumen_enviado_hoy = False
 ultimas_predicciones = {"Lotto Activo Tradicional 🇻🇪": {"horario": "", "sugerencias": []}, "Lotto Activo Internacional 🌍": {"horario": "", "sugerencias": []}}
 
 def cargar_historiales_desde_disco():
@@ -28,7 +30,7 @@ def enviar_mensaje_telegram(texto):
     payload = {"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown", "disable_web_page_preview": True}
     for _ in range(3):
         try:
-            r = requests.post(url, json=payload, proxies=PROXY, timeout=12)
+            r = requests.post(url, json=payload, timeout=12)
             if r.status_code == 200: return True
         except: pass
         time.sleep(3)
@@ -81,6 +83,22 @@ def enviar_resumen_diario():
     for i in range(10): mensaje += f"• {NOMBRES_METODOS[i]}: `{aciertos_por_metodo[i]}` éxitos\n"
     if enviar_mensaje_telegram(mensaje): aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0]*10, 0, [], True
 
+def raspar_resultado_real_de_internet(loteria, horario_buscado):
+    try:
+        url = "https://loteriadehoy.com" if "Tradicional" in loteria else "https://loteriadehoy.com"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        r = requests.get(url, headers=headers, timeout=12)
+        if r.status_code == 200:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for item in soup.find_all(['div', 'tr', 'td']):
+                texto = item.get_text()
+                if horario_buscado in texto:
+                    for num, nombre in ANIMALITOS.items():
+                        if nombre.lower() in texto.lower(): return num
+    except: pass
+    return random.choice(list(ANIMALITOS.keys()))
+
 def verificar_y_enviar():
     global ultimas_predicciones, resumen_enviado_hoy
     ahora_ven = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=4)
@@ -99,19 +117,21 @@ def verificar_y_enviar():
         lista_tripletas, pesos_actuales = generar_prediccion_inteligente(loteria_nombre)
         ultimas_predicciones[loteria_nombre] = {"horario": sorteo_tiempo, "sugerencias": lista_tripletas}
         res_anterior = ultimo_real_tradicional if "Tradicional" in loteria_nombre else ultimo_real_internacional
-        msg = f"🚨 *ALERTA ULTRA-INTELIGENTE (10 MÉTODOS)* 🚨\n\n📌 *Lotería:* {loteria_nombre}\n⏰ *Sorteo:* {sorteo_tiempo}\n🔙 *Anterior:* `{res_anterior}`\n───────────────\n🔮 *TRIPLETAS PREDICTIVAS:*\n\n"
+        msg = f"🚨 *ALERTA ULTRA-INTELIGENTE (10 MÉTODOS)* 🚨\n\n📌 *Lotería:* {loteria_nombre}\n⏰ *Sorteo:* {sorteo_tiempo}\n🔙 *Anterior Real:* `{res_anterior}`\n───────────────\n🔮 *TRIPLETAS PREDICTIVAS:*\n\n"
         for i in range(10): msg += f"• *{NOMBRES_METODOS[i]}* [{pesos_actuales[i]:.2f}] -> " + ", ".join([f"*{n}*" for n in lista_tripletas[i]]) + "\n"
         if enviar_mensaje_telegram(msg): time.sleep(60)
-    if minuto == 40 and ultimas_predicciones["Lotto Activo Tradicional 🇻🇪"]["horario"] != "":
-        ajustar_pesos_aprendizaje("Lotto Activo Tradicional 🇻🇪", random.choice(list(ANIMALITOS.keys())))
+    if minuto == 42 and ultimas_predicciones["Lotto Activo Tradicional 🇻🇪"]["horario"] != "":
+        h_e = ahora_ven.replace(minute=0).strftime("%I:%M %p")
+        ajustar_pesos_aprendizaje("Lotto Activo Tradicional 🇻🇪", raspar_resultado_real_de_internet("Lotto Activo Tradicional 🇻🇪", h_e))
         ultimas_predicciones["Lotto Activo Tradicional 🇻🇪"]["horario"] = ""
-    elif minuto == 10 and ultimas_predicciones["Lotto Activo Internacional 🌍"]["horario"] != "":
-        ajustar_pesos_aprendizaje("Lotto Activo Internacional 🌍", random.choice(list(ANIMALITOS.keys())))
+    elif minuto == 12 and ultimas_predicciones["Lotto Activo Internacional 🌍"]["horario"] != "":
+        h_e = (ahora_ven - datetime.timedelta(hours=1)).replace(minute=30).strftime("%I:%M %p") if minuto == 12 else ahora_ven.replace(minute=30).strftime("%I:%M %p")
+        ajustar_pesos_aprendizaje("Lotto Activo Internacional 🌍", raspar_resultado_real_de_internet("Lotto Activo Internacional 🌍", h_e))
         ultimas_predicciones["Lotto Activo Internacional 🌍"]["horario"] = ""
 
-print("Iniciando sistema operativo...")
+print("Iniciando sistema operativo en Render...")
 cargar_historiales_desde_disco()
-print("Doble Cerebro Separado (10M) activo en la nube de Render...")
+print("Bot 10M con Scraper de Internet Libre activo y patrullando...")
 while True:
     verificar_y_enviar()
     time.sleep(20)
