@@ -39,7 +39,7 @@ def guardar_sorteo_en_disco(loteria, numero_real):
     except: pass
 
 def enviar_mensaje_telegram(texto):
-    url = f"https://telegram.org{TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown", "disable_web_page_preview": True}
     for _ in range(3):
         try:
