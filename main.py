@@ -8,7 +8,7 @@ FILE_TRADICIONAL, FILE_INTERNACIONAL = "historial_tradicional.txt", "historial_i
 pesos_tradicional, pesos_internacional, learning_rate = [0.10]*10, [0.10]*10, 0.05
 historial_tradicional, historial_internacional = [], []
 ultimo_real_tradicional, ultimo_real_internacional = "Ninguno aún", "Ninguno aún"
-aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0]*10, 0, [], False
+aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0] *10, 0, [], False
 ultimas_predicciones = {"Lotto Activo Tradicional 🇻🇪": {"horario": "", "sugerencias": []}, "Lotto Activo Internacional 🌍": {"horario": "", "sugerencias": []}}
 
 # --- SERVIDOR WEB FALSO PARA ENGAÑAR A RENDER ---
@@ -94,7 +94,7 @@ def enviar_resumen_diario():
     animal_mas_repetido = max(set(animalitos_ganadores_hoy), key=animalitos_ganadores_hoy.count) if animalitos_ganadores_hoy else "N/A"
     mensaje = f"📊 *BALANCE DE CIERRE DIARIO TOTAL* 📊\n───────────────\n🔢 *Sorteos:* `{total_sorteos_evaluados}`\n🏆 *Campeón:* `{NOMBRES_METODOS[idx_campeon]}`\n🔥 *Más repetido:* `{animal_mas_repetido}`\n───────────────\n"
     for i in range(10): mensaje += f"• {NOMBRES_METODOS[i]}: `{aciertos_por_metodo[i]}` éxitos\n"
-    if enviar_mensaje_telegram(mensaje): aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0]*10, 0, [], True
+    if enviar_mensaje_telegram(mensaje): aciertos_por_metodo, total_sorteos_evaluados, animalitos_ganadores_hoy, resumen_enviado_hoy = [0] * 10, 0, [], True
 
 def raspar_resultado_real_de_internet(loteria, horario_buscado):
     try:
