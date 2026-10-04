@@ -1,4 +1,4 @@
-import os, requests, random, datetime, time, threading, logging
+import os, requests, random, datetime, time, threading, logging, re
 import psycopg2
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from bs4 import BeautifulSoup
@@ -358,26 +358,77 @@ def generar_prediccion(loteria):
     return [m(hist) for m in METODOS], pesos[loteria]
 
 # ============================================================
-# 8. SCRAPER (devuelve None si falla)
+# 8. SCRAPER REAL (loteriadehoy.com/animalitos/resultados/)
 # ============================================================
 def raspar_resultado_real(loteria, horario_buscado):
-    url = "https://loteriadehoy.com"
+    """
+    Extrae el resultado real de loteriadehoy.com/animalitos/resultados/
+
+    Estructura de la web:
+        <h3>Lotto Activo</h3>
+        ...
+        <h4>19 Chivo</h4>
+        <h5>07:00 PM</h5>
+
+    Devuelve el número (clave de ANIMALITOS) o None si no lo encuentra.
+    """
+    url = "https://loteriadehoy.com/animalitos/resultados/"
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        r = requests.get(url, headers=headers, timeout=12)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+            "Accept-Language": "es-VE,es;q=0.9,en;q=0.8",
+        }
+        r = requests.get(url, headers=headers, timeout=15)
         if r.status_code != 200:
             log.warning(f"Scraper: HTTP {r.status_code}")
             return None
+
         soup = BeautifulSoup(r.text, "html.parser")
-        for item in soup.find_all(["div", "tr", "td"]):
-            texto = item.get_text(" ", strip=True)
-            if horario_buscado in texto:
-                for num, nombre in ANIMALITOS.items():
-                    if nombre.lower() in texto.lower():
-                        return num
+
+        # 1. Encontrar el bloque <h3> de la lotería
+        bloque_loteria = None
+        for h3 in soup.find_all("h3"):
+            texto_h3 = h3.get_text(" ", strip=True)
+            if "Tradicional" in loteria:
+                if texto_h3.strip() == "Lotto Activo":
+                    bloque_loteria = h3
+                    break
+            else:
+                if "Lotto Activo Int" in texto_h3:
+                    bloque_loteria = h3
+                    break
+
+        if not bloque_loteria:
+            log.warning(f"Scraper: no encontró la sección de {loteria}")
+            return None
+
+        # 2. Recorrer los elementos después del <h3> hasta el siguiente <h3>
+        #    Emparejando <h4> (animalito) con <h5> (hora)
+        h4_actual = None
+        for elem in bloque_loteria.find_all_next():
+            if elem.name == "h3":
+                break
+            if elem.name == "h4":
+                h4_actual = elem.get_text(" ", strip=True)
+            elif elem.name == "h5" and h4_actual:
+                hora_en_bloque = elem.get_text(" ", strip=True).upper()
+                if hora_en_bloque == horario_buscado.strip().upper():
+                    match = re.match(r"^(\d+)\s+(.+)$", h4_actual)
+                    if match:
+                        num_web = int(match.group(1))
+                        for num_db in ANIMALITOS.keys():
+                            if int(num_db) == num_web:
+                                log.info(f"✅ Scraper encontró {loteria} {horario_buscado}: {num_db} {ANIMALITOS[num_db]}")
+                                return num_db
+                    h4_actual = None
+
+        log.warning(f"Scraper: no encontró {loteria} a las {horario_buscado}")
+        return None
+
     except Exception as e:
         log.warning(f"Scraper excepción: {e}")
-    return None
+        return None
 
 # ============================================================
 # 9. APRENDIZAJE
