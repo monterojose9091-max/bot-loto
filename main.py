@@ -538,53 +538,40 @@ def verificar_y_enviar():
         return
 
     # ================================================
-    # TRADICIONAL: alerta a los :12
-    # Apunta al sorteo de la próxima hora a los :05 (real)
+    # A LOS :12
+    # 1. Envía alerta Tradicional para el sorteo de la próxima hora a los :05
+    # 2. Evalúa el resultado del Tradicional de ESTA hora a los :05 (que ya salió)
     # ================================================
-    if minuto == 12:
-        proxima_hora = (ahora + datetime.timedelta(hours=1)).replace(minute=5, second=0, microsecond=0)
-        sorteo_tiempo = proxima_hora.strftime("%I:%M %p").lstrip("0")
-        _enviar_alerta(LOTERIA_T, sorteo_tiempo)
+    if 12 <= minuto <= 14:
+        # Evaluar primero el resultado anterior (el de las :05 de esta hora)
+        if ultimas_predicciones[LOTERIA_T]["horario"]:
+            h_e = ahora.replace(minute=5, second=0, microsecond=0).strftime("%I:%M %p").lstrip("0")
+            ajustar_pesos(LOTERIA_T, raspar_resultado_real(LOTERIA_T, h_e))
+            ultimas_predicciones[LOTERIA_T]["horario"] = ""
+
+        # Enviar nueva alerta para el sorteo de la próxima hora a los :05
+        if minuto == 12:
+            proxima_hora = (ahora + datetime.timedelta(hours=1)).replace(minute=5, second=0, microsecond=0)
+            sorteo_tiempo = proxima_hora.strftime("%I:%M %p").lstrip("0")
+            _enviar_alerta(LOTERIA_T, sorteo_tiempo)
 
     # ================================================
-    # INTERNACIONAL: alerta a los :42
-    # Apunta al sorteo de la próxima hora a los :35 (real)
+    # A LOS :42
+    # 1. Envía alerta Internacional para el sorteo de la próxima hora a los :35
+    # 2. Evalúa el resultado del Internacional de ESTA hora a los :35 (que ya salió)
     # ================================================
-    elif minuto == 42:
-        proxima_hora = (ahora + datetime.timedelta(hours=1)).replace(minute=35, second=0, microsecond=0)
-        sorteo_tiempo = proxima_hora.strftime("%I:%M %p").lstrip("0")
-        _enviar_alerta(LOTERIA_I, sorteo_tiempo)
+    elif 42 <= minuto <= 44:
+        # Evaluar primero el resultado anterior (el de las :35 de esta hora)
+        if ultimas_predicciones[LOTERIA_I]["horario"]:
+            h_e = ahora.replace(minute=35, second=0, microsecond=0).strftime("%I:%M %p").lstrip("0")
+            ajustar_pesos(LOTERIA_I, raspar_resultado_real(LOTERIA_I, h_e))
+            ultimas_predicciones[LOTERIA_I]["horario"] = ""
 
-    # ================================================
-    # EVALUACIÓN
-    # Tradicional: evalúa a los :42-:45 el sorteo de esta hora a los :05
-    # Internacional: evalúa a los :12-:15 el sorteo de esta hora a los :35
-    # ================================================
-    if 42 <= minuto <= 45 and ultimas_predicciones[LOTERIA_T]["horario"]:
-        h_e = ahora.replace(minute=5, second=0, microsecond=0).strftime("%I:%M %p").lstrip("0")
-        ajustar_pesos(LOTERIA_T, raspar_resultado_real(LOTERIA_T, h_e))
-        ultimas_predicciones[LOTERIA_T]["horario"] = ""
-
-    elif 12 <= minuto <= 15 and ultimas_predicciones[LOTERIA_I]["horario"]:
-        h_e = ahora.replace(minute=35, second=0, microsecond=0).strftime("%I:%M %p").lstrip("0")
-        ajustar_pesos(LOTERIA_I, raspar_resultado_real(LOTERIA_I, h_e))
-        ultimas_predicciones[LOTERIA_I]["horario"] = ""
-
-def _enviar_alerta(loteria, sorteo_tiempo):
-    tripletas, pesos_actuales = generar_prediccion(loteria)
-    ultimas_predicciones[loteria] = {"horario": sorteo_tiempo, "sugerencias": tripletas}
-    msg = (
-        f"🚨 *ALERTA (10 MÉTODOS)* 🚨\n\n"
-        f"📌 *Lotería:* {loteria}\n"
-        f"⏰ *Sorteo:* {sorteo_tiempo}\n"
-        f"🔙 *Anterior:* `{ultimo_real[loteria]}`\n"
-        f"───────────────\n🔮 *Tripletas:*\n\n"
-    )
-    for i in range(10):
-        nums = ", ".join(f"`{n}`" for n in tripletas[i])
-        msg += f"• *{NOMBRES_METODOS[i]}* [{pesos_actuales[i]:.2f}] → {nums}\n"
-    if enviar_mensaje_telegram(msg):
-        time.sleep(60)
+        # Enviar nueva alerta para el sorteo de la próxima hora a los :35
+        if minuto == 42:
+            proxima_hora = (ahora + datetime.timedelta(hours=1)).replace(minute=35, second=0, microsecond=0)
+            sorteo_tiempo = proxima_hora.strftime("%I:%M %p").lstrip("0")
+            _enviar_alerta(LOTERIA_I, sorteo_tiempo)
 
 # ============================================================
 # 12. ARRANQUE
