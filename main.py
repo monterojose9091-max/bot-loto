@@ -358,70 +358,99 @@ def generar_prediccion(loteria):
     return [m(hist) for m in METODOS], pesos[loteria]
 
 # ============================================================
-# 8. SCRAPER REAL (loteriadehoy.com/animalitos/resultados/)
+# 8. SCRAPER REAL (lotoven.com/animalitos/)
 # ============================================================
 def raspar_resultado_real(loteria, horario_buscado):
     """
-    Extrae el resultado real de loteriadehoy.com/animalitos/resultados/
+    Extrae el resultado real de lotoven.com/animalitos/
 
-    Estructura de la web:
-        <h3>Lotto Activo</h3>
+    Estructura HTML:
+        <h3>Resultados Lotto Activo</h3>
+        <div class="counter-item">
+            <span class="info rojo">21 Gallo</span>
+            <span class="info2 horario">11:00 AM</span>
+        </div>
+        <h3>Resultados La Granjita</h3>
         ...
-        <h4>19 Chivo</h4>
-        <h5>07:00 PM</h5>
-
-    Devuelve el número (clave de ANIMALITOS) o None si no lo encuentra.
     """
-    url = "https://loteriadehoy.com/animalitos/resultados/"
+    url = "https://lotoven.com/animalitos/"
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "es-VE,es;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+            "Referer": "https://www.google.com/",
         }
         r = requests.get(url, headers=headers, timeout=15)
+        log.info(f"Scraper: HTTP {r.status_code}, len: {len(r.text)}")
+
         if r.status_code != 200:
             log.warning(f"Scraper: HTTP {r.status_code}")
             return None
 
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # 1. Encontrar el bloque <h3> de la lotería
-        bloque_loteria = None
-        for h3 in soup.find_all("h3"):
-            texto_h3 = h3.get_text(" ", strip=True)
-            if "Tradicional" in loteria:
-                if texto_h3.strip() == "Lotto Activo":
-                    bloque_loteria = h3
-                    break
-            else:
-                if "Lotto Activo Int" in texto_h3:
-                    bloque_loteria = h3
-                    break
+        # Nombre exacto de la lotería en lotoven.com
+        if "Tradicional" in loteria:
+            nombre_loteria_buscado = "Resultados Lotto Activo"
+        else:
+            nombre_loteria_buscado = "Resultados Lotto Activo RD Int"
 
-        if not bloque_loteria:
-            log.warning(f"Scraper: no encontró la sección de {loteria}")
+        # 1. Encontrar el <h3> de la lotería
+        h3_loteria = None
+        for h3 in soup.find_all("h3"):
+            texto_h3 = h3.get_text(strip=True)
+            if texto_h3.lower() == nombre_loteria_buscado.lower():
+                h3_loteria = h3
+                break
+
+        if not h3_loteria:
+            log.warning(f"Scraper: no encontró sección '{nombre_loteria_buscado}'")
             return None
 
-        # 2. Recorrer los elementos después del <h3> hasta el siguiente <h3>
-        #    Emparejando <h4> (animalito) con <h5> (hora)
-        h4_actual = None
-        for elem in bloque_loteria.find_all_next():
+        # 2. Recorrer los elementos siguientes hasta el próximo <h3>
+        bloques_loteria = []
+        for elem in h3_loteria.find_all_next():
             if elem.name == "h3":
                 break
-            if elem.name == "h4":
-                h4_actual = elem.get_text(" ", strip=True)
-            elif elem.name == "h5" and h4_actual:
-                hora_en_bloque = elem.get_text(" ", strip=True).upper()
-                if hora_en_bloque == horario_buscado.strip().upper():
-                    match = re.match(r"^(\d+)\s+(.+)$", h4_actual)
-                    if match:
-                        num_web = int(match.group(1))
-                        for num_db in ANIMALITOS.keys():
-                            if int(num_db) == num_web:
-                                log.info(f"✅ Scraper encontró {loteria} {horario_buscado}: {num_db} {ANIMALITOS[num_db]}")
-                                return num_db
-                    h4_actual = None
+            if elem.name == "div" and "counter-item" in (elem.get("class") or []):
+                bloques_loteria.append(elem)
+
+        log.info(f"Scraper: {len(bloques_loteria)} bloques para {nombre_loteria_buscado}")
+
+        # 3. Buscar el horario en esos bloques
+        for bloque in bloques_loteria:
+            span_horario = bloque.find("span", class_="info2 horario")
+            if not span_horario:
+                continue
+
+            hora_en_bloque = span_horario.get_text(strip=True).upper()
+            if hora_en_bloque != horario_buscado.strip().upper():
+                continue
+
+            span_info = bloque.find("span", class_="info")
+            if not span_info:
+                continue
+
+            texto_info = span_info.get_text(strip=True)
+            match = re.match(r"^(\d+)\s+", texto_info)
+            if not match:
+                continue
+
+            num_web = int(match.group(1))
+            for num_db, nombre_db in ANIMALITOS.items():
+                if int(num_db) == num_web:
+                    log.info(f"✅ Scraper encontró {loteria} {horario_buscado}: {num_db} {nombre_db}")
+                    return num_db
 
         log.warning(f"Scraper: no encontró {loteria} a las {horario_buscado}")
         return None
