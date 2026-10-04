@@ -358,105 +358,105 @@ def generar_prediccion(loteria):
     return [m(hist) for m in METODOS], pesos[loteria]
 
 # ============================================================
-# 8. SCRAPER REAL (lotoven.com/animalitos/)
+# 8. SCRAPER: lee del canal público de Telegram
 # ============================================================
-def raspar_resultado_real(loteria, horario_buscado):
+def convertir_hora_a_formato_canal(hora_bot):
     """
-    Extrae el resultado real de lotoven.com/animalitos/
+    El bot maneja horas con :05 y :35 (reales),
+    pero el canal las publica con :00 y :30.
 
-    Estructura HTML:
-        <h3>Resultados Lotto Activo</h3>
-        <div class="counter-item">
-            <span class="info rojo">21 Gallo</span>
-            <span class="info2 horario">11:00 AM</span>
-        </div>
-        <h3>Resultados La Granjita</h3>
-        ...
+    Ejemplo: "01:05 PM" -> "01:00 PM"
+             "01:35 PM" -> "01:30 PM"
     """
-    url = "https://lotoven.com/animalitos/"
+    match = re.match(r"(\d{1,2}):(\d{2})\s*([APap][Mm])", hora_bot.strip())
+    if not match:
+        return hora_bot
+    hh = match.group(1)
+    mm = match.group(2)
+    ampm = match.group(3).upper()
+
+    # Convertir :05 -> :00 y :35 -> :30
+    if mm == "05":
+        mm_canal = "00"
+    elif mm == "35":
+        mm_canal = "30"
+    else:
+        mm_canal = mm
+
+    return f"{hh}:{mm_canal} {ampm}"
+
+def raspar_resultado_real(loteria, horario_bot):
+    """
+    Lee los resultados desde el canal público de Telegram.
+
+    ⚠️ El bot maneja horas con :05 y :35 (reales), pero el canal
+    las publica con :00 y :30. Aquí se convierte el formato.
+    """
+    horario_buscado = convertir_hora_a_formato_canal(horario_bot)
+    log.info(f"Scraper: buscando {horario_bot} (formato canal: {horario_buscado})")
+
+    url = "https://t.me/s/pronosticoia_lotoactivo_granjita"
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-VE,es;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-            "Referer": "https://www.google.com/",
+            "Accept-Language": "es-VE,es;q=0.9",
         }
         r = requests.get(url, headers=headers, timeout=15)
-        log.info(f"Scraper: HTTP {r.status_code}, len: {len(r.text)}")
+        log.info(f"Telegram scraper: HTTP {r.status_code}, len: {len(r.text)}")
 
         if r.status_code != 200:
-            log.warning(f"Scraper: HTTP {r.status_code}")
+            log.warning(f"Telegram scraper: HTTP {r.status_code}")
             return None
 
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Nombre exacto de la lotería en lotoven.com
+        mensajes = soup.find_all("div", class_="tgme_widget_message_text")
+        log.info(f"Telegram scraper: {len(mensajes)} mensajes encontrados")
+
+        patron_linea = re.compile(
+            r"([A-ZÁÉÍÓÚÑ]+)\s*\((\d{1,2})\)\s*-\s*(\d{1,2}:\d{2}\s*[APap][Mm])"
+        )
+
         if "Tradicional" in loteria:
-            nombre_loteria_buscado = "Resultados Lotto Activo"
+            keyword = "LOTTO ACTIVO:"
+            keyword_excluir = "INTERNACIONAL"
         else:
-            nombre_loteria_buscado = "Resultados Lotto Activo RD Int"
+            keyword = "LOTTO ACTIVO INTERNACIONAL:"
+            keyword_excluir = None
 
-        # 1. Encontrar el <h3> de la lotería
-        h3_loteria = None
-        for h3 in soup.find_all("h3"):
-            texto_h3 = h3.get_text(strip=True)
-            if texto_h3.lower() == nombre_loteria_buscado.lower():
-                h3_loteria = h3
-                break
+        for msg in reversed(mensajes):
+            texto = msg.get_text("\n", strip=True).upper()
 
-        if not h3_loteria:
-            log.warning(f"Scraper: no encontró sección '{nombre_loteria_buscado}'")
-            return None
+            for linea in texto.split("\n"):
+                linea = linea.strip()
 
-        # 2. Recorrer los elementos siguientes hasta el próximo <h3>
-        bloques_loteria = []
-        for elem in h3_loteria.find_all_next():
-            if elem.name == "h3":
-                break
-            if elem.name == "div" and "counter-item" in (elem.get("class") or []):
-                bloques_loteria.append(elem)
+                if keyword not in linea:
+                    continue
 
-        log.info(f"Scraper: {len(bloques_loteria)} bloques para {nombre_loteria_buscado}")
+                if keyword_excluir and keyword_excluir in linea:
+                    continue
 
-        # 3. Buscar el horario en esos bloques
-        for bloque in bloques_loteria:
-            span_horario = bloque.find("span", class_="info2 horario")
-            if not span_horario:
-                continue
+                match = patron_linea.search(linea)
+                if not match:
+                    continue
 
-            hora_en_bloque = span_horario.get_text(strip=True).upper()
-            if hora_en_bloque != horario_buscado.strip().upper():
-                continue
+                num_web = int(match.group(2))
+                hora_en_linea = match.group(3).strip().upper()
 
-            span_info = bloque.find("span", class_="info")
-            if not span_info:
-                continue
+                if hora_en_linea != horario_buscado.strip().upper():
+                    continue
 
-            texto_info = span_info.get_text(strip=True)
-            match = re.match(r"^(\d+)\s+", texto_info)
-            if not match:
-                continue
+                for num_db, nombre_db in ANIMALITOS.items():
+                    if int(num_db) == num_web:
+                        log.info(f"✅ Telegram encontró {loteria} {horario_bot}: {num_db} {nombre_db}")
+                        return num_db
 
-            num_web = int(match.group(1))
-            for num_db, nombre_db in ANIMALITOS.items():
-                if int(num_db) == num_web:
-                    log.info(f"✅ Scraper encontró {loteria} {horario_buscado}: {num_db} {nombre_db}")
-                    return num_db
-
-        log.warning(f"Scraper: no encontró {loteria} a las {horario_buscado}")
+        log.warning(f"Telegram: no encontró {loteria} a las {horario_buscado}")
         return None
 
     except Exception as e:
-        log.warning(f"Scraper excepción: {e}")
+        log.warning(f"Telegram scraper excepción: {e}")
         return None
 
 # ============================================================
@@ -537,18 +537,36 @@ def verificar_y_enviar():
     if hora < 7 or hora > 20:
         return
 
-    if minuto == 30:
-        _enviar_alerta(LOTERIA_T, (ahora + datetime.timedelta(hours=1)).replace(minute=0).strftime("%I:%M %p"))
-    elif minuto == 0:
-        _enviar_alerta(LOTERIA_I, ahora.replace(minute=30).strftime("%I:%M %p"))
+    # ================================================
+    # TRADICIONAL: alerta a los :12
+    # Apunta al sorteo de la próxima hora a los :05 (real)
+    # ================================================
+    if minuto == 12:
+        proxima_hora = (ahora + datetime.timedelta(hours=1)).replace(minute=5, second=0, microsecond=0)
+        sorteo_tiempo = proxima_hora.strftime("%I:%M %p").lstrip("0")
+        _enviar_alerta(LOTERIA_T, sorteo_tiempo)
 
+    # ================================================
+    # INTERNACIONAL: alerta a los :42
+    # Apunta al sorteo de la próxima hora a los :35 (real)
+    # ================================================
+    elif minuto == 42:
+        proxima_hora = (ahora + datetime.timedelta(hours=1)).replace(minute=35, second=0, microsecond=0)
+        sorteo_tiempo = proxima_hora.strftime("%I:%M %p").lstrip("0")
+        _enviar_alerta(LOTERIA_I, sorteo_tiempo)
+
+    # ================================================
+    # EVALUACIÓN
+    # Tradicional: evalúa a los :42-:45 el sorteo de esta hora a los :05
+    # Internacional: evalúa a los :12-:15 el sorteo de esta hora a los :35
+    # ================================================
     if 42 <= minuto <= 45 and ultimas_predicciones[LOTERIA_T]["horario"]:
-        h_e = ahora.replace(minute=0).strftime("%I:%M %p")
+        h_e = ahora.replace(minute=5, second=0, microsecond=0).strftime("%I:%M %p").lstrip("0")
         ajustar_pesos(LOTERIA_T, raspar_resultado_real(LOTERIA_T, h_e))
         ultimas_predicciones[LOTERIA_T]["horario"] = ""
 
     elif 12 <= minuto <= 15 and ultimas_predicciones[LOTERIA_I]["horario"]:
-        h_e = (ahora - datetime.timedelta(hours=1)).replace(minute=30).strftime("%I:%M %p")
+        h_e = ahora.replace(minute=35, second=0, microsecond=0).strftime("%I:%M %p").lstrip("0")
         ajustar_pesos(LOTERIA_I, raspar_resultado_real(LOTERIA_I, h_e))
         ultimas_predicciones[LOTERIA_I]["horario"] = ""
 
