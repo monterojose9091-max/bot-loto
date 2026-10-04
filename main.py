@@ -1,23 +1,22 @@
-import os, requests, random, datetime, time, threading, sqlite3, logging
+import os, requests, random, datetime, time, threading, logging
+import psycopg2
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from bs4 import BeautifulSoup
 
 # ============================================================
 # 1. CONFIGURACIÓN SEGURA (variables de entorno)
 # ============================================================
-# En Render debes crear estas variables en "Environment":
-#   TELEGRAM_TOKEN   -> el token que te dio BotFather
-#   TELEGRAM_CHAT_ID -> tu chat id (2023043563 en tu caso)
-#   DB_PATH          -> opcional, por defecto /data/bot_loto.db
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-DB_PATH = os.environ.get("DB_PATH", "/data/bot_loto.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not TOKEN or not CHAT_ID:
     raise SystemExit("❌ Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID en las variables de entorno.")
+if not DATABASE_URL:
+    raise SystemExit("❌ Falta DATABASE_URL en las variables de entorno.")
 
 # ============================================================
-# 2. LOGGING (para ver qué pasa en Render)
+# 2. LOGGING
 # ============================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +51,6 @@ LOTERIA_I = "Lotto Activo Internacional 🌍"
 
 LEARNING_RATE = 0.05
 
-# Pesos y estado en memoria (se hidratan desde SQLite al arrancar)
 pesos = {LOTERIA_T: [0.10] * 10, LOTERIA_I: [0.10] * 10}
 historial = {LOTERIA_T: [], LOTERIA_I: []}
 ultimo_real = {LOTERIA_T: "Ninguno aún", LOTERIA_I: "Ninguno aún"}
@@ -65,7 +63,7 @@ ultimas_predicciones = {
 }
 
 # ============================================================
-# 4. SERVIDOR WEB (para que Render no duerma el servicio)
+# 4. SERVIDOR WEB (para Render)
 # ============================================================
 class ServidorFake(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -75,8 +73,7 @@ class ServidorFake(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot de Loto Activo operando correctamente.")
 
     def log_message(self, format, *args):
-        pass  # Silenciar logs del servidor HTTP
-
+        pass
 
 def arrancar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
@@ -85,21 +82,23 @@ def arrancar_servidor_web():
     server.serve_forever()
 
 # ============================================================
-# 5. BASE DE DATOS SQLITE (persistencia real)
+# 5. BASE DE DATOS POSTGRES (Neon)
 # ============================================================
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
+
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS historial (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             loteria TEXT NOT NULL,
             numero TEXT NOT NULL,
             fecha TEXT NOT NULL
         )
     """)
-    c.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS pesos (
             loteria TEXT NOT NULL,
             indice INTEGER NOT NULL,
@@ -107,7 +106,7 @@ def init_db():
             PRIMARY KEY (loteria, indice)
         )
     """)
-    c.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS aciertos (
             loteria TEXT NOT NULL,
             indice INTEGER NOT NULL,
@@ -116,23 +115,22 @@ def init_db():
         )
     """)
     conn.commit()
-    return conn
-
+    cur.close()
+    conn.close()
 
 def cargar_estado_desde_db():
-    conn = init_db()
-    c = conn.cursor()
+    init_db()
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    # Historial
     for lot in (LOTERIA_T, LOTERIA_I):
-        c.execute("SELECT numero FROM historial WHERE loteria=? ORDER BY id ASC", (lot,))
-        historial[lot] = [row[0] for row in c.fetchall() if row[0] in ANIMALITOS]
+        cur.execute("SELECT numero FROM historial WHERE loteria=%s ORDER BY id ASC", (lot,))
+        historial[lot] = [row[0] for row in cur.fetchall() if row[0] in ANIMALITOS]
         log.info(f"📚 Historial {lot}: {len(historial[lot])} sorteos")
 
-    # Pesos
     for lot in (LOTERIA_T, LOTERIA_I):
-        c.execute("SELECT indice, peso FROM pesos WHERE loteria=?", (lot,))
-        rows = c.fetchall()
+        cur.execute("SELECT indice, peso FROM pesos WHERE loteria=%s", (lot,))
+        rows = cur.fetchall()
         if rows:
             p = [0.10] * 10
             for idx, val in rows:
@@ -140,10 +138,9 @@ def cargar_estado_desde_db():
                     p[idx] = val
             pesos[lot] = p
 
-    # Aciertos
     for lot in (LOTERIA_T, LOTERIA_I):
-        c.execute("SELECT indice, total FROM aciertos WHERE loteria=?", (lot,))
-        rows = c.fetchall()
+        cur.execute("SELECT indice, total FROM aciertos WHERE loteria=%s", (lot,))
+        rows = cur.fetchall()
         if rows:
             a = [0] * 10
             for idx, val in rows:
@@ -151,41 +148,44 @@ def cargar_estado_desde_db():
                     a[idx] = val
             aciertos_hoy[lot] = a
 
+    cur.close()
     conn.close()
 
-
 def guardar_sorteo_db(loteria, numero):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO historial (loteria, numero, fecha) VALUES (?, ?, ?)",
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO historial (loteria, numero, fecha) VALUES (%s, %s, %s)",
         (loteria, numero, datetime.datetime.utcnow().isoformat()),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
-
 def guardar_pesos_db(loteria):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     for i, p in enumerate(pesos[loteria]):
-        c.execute(
-            "INSERT OR REPLACE INTO pesos (loteria, indice, peso) VALUES (?, ?, ?)",
+        cur.execute(
+            "INSERT INTO pesos (loteria, indice, peso) VALUES (%s, %s, %s) "
+            "ON CONFLICT (loteria, indice) DO UPDATE SET peso = EXCLUDED.peso",
             (loteria, i, p),
         )
     conn.commit()
+    cur.close()
     conn.close()
 
-
 def guardar_aciertos_db(loteria):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     for i, a in enumerate(aciertos_hoy[loteria]):
-        c.execute(
-            "INSERT OR REPLACE INTO aciertos (loteria, indice, total) VALUES (?, ?, ?)",
+        cur.execute(
+            "INSERT INTO aciertos (loteria, indice, total) VALUES (%s, %s, %s) "
+            "ON CONFLICT (loteria, indice) DO UPDATE SET total = EXCLUDED.total",
             (loteria, i, a),
         )
     conn.commit()
+    cur.close()
     conn.close()
 
 # ============================================================
@@ -211,14 +211,12 @@ def enviar_mensaje_telegram(texto):
     return False
 
 # ============================================================
-# 7. MÉTODOS DE PREDICCIÓN (ahora SÍ son 10 reales)
+# 7. MÉTODOS DE PREDICCIÓN
 # ============================================================
 def _tripleta_aleatoria():
     return random.sample(CLAVES, 3)
 
-
 def m1_frecuencia(hist):
-    """Los 3 números más frecuentes del historial reciente."""
     if not hist:
         return _tripleta_aleatoria()
     recientes = hist[-100:]
@@ -230,9 +228,7 @@ def m1_frecuencia(hist):
         top.append(random.choice(CLAVES))
     return top[:3]
 
-
 def m2_frios(hist):
-    """Los 3 números que hace más tiempo no salen."""
     if not hist:
         return _tripleta_aleatoria()
     ultima_aparicion = {n: -1 for n in CLAVES}
@@ -241,9 +237,7 @@ def m2_frios(hist):
     frios = sorted(ultima_aparicion, key=lambda x: ultima_aparicion[x])[:3]
     return frios
 
-
 def m3_simetria(hist):
-    """Números que forman simetría respecto al último (último ± k)."""
     if not hist:
         return _tripleta_aleatoria()
     try:
@@ -253,15 +247,15 @@ def m3_simetria(hist):
     cand = []
     for k in (1, 2, 3):
         for v in (ultimo - k, ultimo + k):
-            if 0 <= v <= 36 and f"{v:02d}" not in cand and str(v) not in cand:
-                cand.append(f"{v:02d}" if v < 10 else str(v))
+            if 0 <= v <= 36:
+                s = f"{v:02d}" if v < 10 else str(v)
+                if s not in cand:
+                    cand.append(s)
     while len(cand) < 3:
         cand.append(random.choice(CLAVES))
     return cand[:3]
 
-
 def m4_cruzado(hist):
-    """Mezcla el último real con los 2 más frecuentes."""
     if not hist:
         return _tripleta_aleatoria()
     ultimo = hist[-1]
@@ -273,9 +267,7 @@ def m4_cruzado(hist):
         top2.append(random.choice(CLAVES))
     return [ultimo] + top2[:2]
 
-
 def m5_markov(hist):
-    """Markov: el que más veces siguió al último resultado."""
     if len(hist) < 2:
         return _tripleta_aleatoria()
     ultimo = hist[-1]
@@ -286,9 +278,7 @@ def m5_markov(hist):
     resto = [n for n in CLAVES if n != mas_comun]
     return [mas_comun] + random.sample(resto, 2)
 
-
 def m6_poisson(hist):
-    """Aproximación Poisson: números con conteo cercano a la media."""
     if not hist:
         return _tripleta_aleatoria()
     conteo = {n: 0 for n in CLAVES}
@@ -299,9 +289,7 @@ def m6_poisson(hist):
     cercanos = sorted(conteo, key=lambda x: abs(conteo[x] - media))[:3]
     return cercanos
 
-
 def m7_regresion(hist):
-    """Tendencia lineal simple sobre los últimos números."""
     if len(hist) < 3:
         return _tripleta_aleatoria()
     ultimos = []
@@ -322,9 +310,7 @@ def m7_regresion(hist):
         cand.append(random.choice(CLAVES))
     return list(dict.fromkeys(cand))[:3]
 
-
 def m8_condicionada(hist):
-    """Condicionada: números que aparecen tras pares específicos."""
     if len(hist) < 4:
         return _tripleta_aleatoria()
     ultimo = hist[-1]
@@ -340,9 +326,7 @@ def m8_condicionada(hist):
         cand.append(random.choice(CLAVES))
     return list(dict.fromkeys(cand))[:3]
 
-
 def m9_cluster(hist):
-    """Cluster: agrupa los números en rangos y elige de un cluster."""
     if not hist:
         return _tripleta_aleatoria()
     clusters = {i: [] for i in range(4)}
@@ -355,9 +339,7 @@ def m9_cluster(hist):
     pool = clusters[cluster_top] or CLAVES
     return random.sample(pool, min(3, len(pool))) if len(pool) >= 3 else _tripleta_aleatoria()
 
-
 def m10_genetico(hist):
-    """Genético simplificado: cruza el top frecuente con el último."""
     if not hist:
         return _tripleta_aleatoria()
     freq = {}
@@ -368,27 +350,17 @@ def m10_genetico(hist):
     padres = list(dict.fromkeys([ultimo] + top))
     return random.sample(padres, min(3, len(padres))) if len(padres) >= 3 else _tripleta_aleatoria()
 
-
 METODOS = [m1_frecuencia, m2_frios, m3_simetria, m4_cruzado, m5_markov,
            m6_poisson, m7_regresion, m8_condicionada, m9_cluster, m10_genetico]
-
 
 def generar_prediccion(loteria):
     hist = historial[loteria]
     return [m(hist) for m in METODOS], pesos[loteria]
 
 # ============================================================
-# 8. SCRAPER REAL (con fallback honesto: si falla, devuelve None)
+# 8. SCRAPER (devuelve None si falla)
 # ============================================================
 def raspar_resultado_real(loteria, horario_buscado):
-    """
-    Intenta obtener el resultado real desde una web pública.
-    ⚠️ IMPORTANTE: La URL y el parseo dependen de la web real.
-    Debes adaptar los selectores a la página que uses.
-
-    Si no se puede, devuelve None (NO un número aleatorio).
-    """
-    # TODO: reemplaza esta URL por la web real de resultados
     url = "https://loteriadehoy.com"
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -405,7 +377,7 @@ def raspar_resultado_real(loteria, horario_buscado):
                         return num
     except Exception as e:
         log.warning(f"Scraper excepción: {e}")
-    return None  # 👈 honesto: no inventamos datos
+    return None
 
 # ============================================================
 # 9. APRENDIZAJE
@@ -485,13 +457,11 @@ def verificar_y_enviar():
     if hora < 7 or hora > 20:
         return
 
-    # --- ALERTAS ---
     if minuto == 30:
         _enviar_alerta(LOTERIA_T, (ahora + datetime.timedelta(hours=1)).replace(minute=0).strftime("%I:%M %p"))
     elif minuto == 0:
         _enviar_alerta(LOTERIA_I, ahora.replace(minute=30).strftime("%I:%M %p"))
 
-    # --- EVALUACIÓN (rangos amplios para no perder ventanas) ---
     if 42 <= minuto <= 45 and ultimas_predicciones[LOTERIA_T]["horario"]:
         h_e = ahora.replace(minute=0).strftime("%I:%M %p")
         ajustar_pesos(LOTERIA_T, raspar_resultado_real(LOTERIA_T, h_e))
@@ -501,7 +471,6 @@ def verificar_y_enviar():
         h_e = (ahora - datetime.timedelta(hours=1)).replace(minute=30).strftime("%I:%M %p")
         ajustar_pesos(LOTERIA_I, raspar_resultado_real(LOTERIA_I, h_e))
         ultimas_predicciones[LOTERIA_I]["horario"] = ""
-
 
 def _enviar_alerta(loteria, sorteo_tiempo):
     tripletas, pesos_actuales = generar_prediccion(loteria)
@@ -518,7 +487,6 @@ def _enviar_alerta(loteria, sorteo_tiempo):
         msg += f"• *{NOMBRES_METODOS[i]}* [{pesos_actuales[i]:.2f}] → {nums}\n"
     if enviar_mensaje_telegram(msg):
         time.sleep(60)
-
 
 # ============================================================
 # 12. ARRANQUE
